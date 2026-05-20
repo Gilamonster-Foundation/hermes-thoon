@@ -1,0 +1,11 @@
+[package]
+name = "hermes-msgproc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Phase 4 (deferred): message processing for the Hermes Agent."
+
+[dependencies]
+hermes-core = { path = "../hermes-core" }

@@ -1,0 +1,16 @@
+[package]
+name = "hermes-toolreg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Phase 1: tool registry, schema, and dispatch for the Hermes Agent."
+
+[lib]
+name = "hermes_toolreg"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+hermes-core = { path = "../hermes-core" }

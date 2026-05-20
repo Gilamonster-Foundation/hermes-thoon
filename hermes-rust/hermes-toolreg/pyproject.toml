@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hermes-toolreg"
+version = "0.1.0"
+description = "Phase 1 Rust acceleration for the Hermes Agent tool registry and dispatch."
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.urls]
+Repository = "https://github.com/Gilamonster-Foundation/hermes-thoon"
+
+[tool.maturin]
+module-name = "hermes_toolreg"
+features = ["pyo3/extension-module"]
+strip = true

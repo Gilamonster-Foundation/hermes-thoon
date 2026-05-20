@@ -1,0 +1,11 @@
+[package]
+name = "hermes-fileops"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Phase 2: file read/write/search/patch for the Hermes Agent."
+
+[dependencies]
+hermes-core = { path = "../hermes-core" }
