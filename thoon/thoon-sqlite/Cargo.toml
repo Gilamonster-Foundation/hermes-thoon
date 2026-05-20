@@ -1,0 +1,11 @@
+[package]
+name = "thoon-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generic SQLite + FTS5 helpers (connection pooling, prepared-statement cache, WAL)."
+
+[dependencies]
+thoon-core = { path = "../thoon-core" }

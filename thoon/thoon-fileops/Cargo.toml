@@ -1,11 +1,11 @@
 [package]
-name = "hermes-fileops"
+name = "thoon-fileops"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Phase 2: file read/write/search/patch for the Hermes Agent."
+description = "Fast regex search, mmap reads, atomic writes, and unified-diff patching."
 
 [dependencies]
-hermes-core = { path = "../hermes-core" }
+thoon-core = { path = "../thoon-core" }

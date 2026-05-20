@@ -1,11 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "hermes-core",
-    "hermes-toolreg",
-    "hermes-fileops",
-    "hermes-sessiondb",
-    "hermes-msgproc",
+    "thoon-core",
+    "thoon-toolreg",
+    "thoon-fileops",
+    "thoon-sqlite",
 ]
 
 [workspace.package]

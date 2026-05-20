@@ -1,207 +1,232 @@
 # PLAN — Hermes Agent Rust Acceleration via PyO3
 
 This branch (`thoon`) tracks the design and rollout of Rust-accelerated
-hot paths for the Hermes Agent codebase via PyO3 + maturin.
+hot paths for the Hermes Agent codebase via PyO3 + maturin, shipped as
+optional plugins that the existing Hermes plugin system discovers.
 
 The Python tree in this repository remains a fork of
 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
-The Rust workspace lives under `hermes-rust/` and is feature-gated so that
-the existing Python implementations remain authoritative and fully usable
-when Rust is unavailable.
+All new work lives under `thoon/` and is structured so that upstream
+can cherry-pick any individual crate or plugin on its own schedule.
 
 ## Goal
 
 3–10× throughput on the agent's hot paths while preserving 100% API
 compatibility with the upstream Python interfaces.
 
+## Two-Layer Architecture
+
+| Layer            | Brand          | What it is                                       | Audience              |
+| ---------------- | -------------- | ------------------------------------------------ | --------------------- |
+| **`thoon-*`**    | `thoon`        | Generic Rust primitives with PyO3 bindings       | Any Python LLM agent  |
+| **`hermes-thoon-*`** | `hermes-thoon` | Hermes plugin glue adapting a `thoon-*` primitive | Hermes specifically  |
+
+The `thoon-*` crates are framework-agnostic and publishable independently
+to crates.io and PyPI. The `hermes-thoon-*` packages are small Python
+shims that register via Hermes' existing `hermes_agent.plugins`
+entry-point group and adapt a `thoon-*` primitive to a specific Hermes
+contract.
+
+### Why two layers
+
+1. **Decoupling.** Generic primitives can be adopted by other agents
+   (gilabot, drake-pool's hermes worker, other Python LLM frameworks)
+   without taking a Hermes dependency.
+2. **Cherry-pick clarity.** The Hermes-facing surface is a small Python
+   plugin; the Rust complexity lives behind a framework-neutral library
+   boundary. Upstream sees "an optional plugin that registers a faster
+   ToolRegistry implementation," not a fork-wide Rust intrusion.
+3. **Reviewability.** Hermes maintainers reviewing a cherry-pick can
+   focus on the plugin glue (50–100 lines of Python) and trust the
+   primitive's behaviour from its own test suite.
+
 ## Contribution Posture
 
-`hermes-thoon` is **not a long-term divergent fork.** Every crate in
-`hermes-rust/` is an *optional* Rust variation of an existing Hermes
-package, designed so that upstream NousResearch/hermes-agent can cherry-pick
-the work on their own schedule, with no obligation to take it.
+`hermes-thoon` is **not a long-term divergent fork.** Every package in
+`thoon/` is designed so that upstream NousResearch/hermes-agent can
+cherry-pick the work on their own schedule, with no obligation to take
+it.
 
 That posture imposes hard discipline on how commits are shaped:
 
-1. **Pure additions when possible.** New work goes under `hermes-rust/`
-   and ships with its own Python compat wrapper. The upstream Python tree
-   stays untouched.
-2. **One-line wire-ins.** When a Python file in the upstream tree must
-   change to consume the Rust accelerator, the change is a **single
-   import-line swap** to the compat wrapper. No reformatting, no
+1. **Pure additions when possible.** New work goes under `thoon/` and
+   ships as standalone pip-installable packages. The upstream Python
+   tree stays untouched.
+2. **No new flag system.** We reuse Hermes' existing
+   `plugins.enabled` / `plugins.disabled` config knobs. Users
+   enable / disable a `thoon-*` accelerator by installing or
+   uninstalling its `hermes-thoon-*` plugin, or by listing it in
+   their `config.yaml`.
+3. **One-line wire-ins if needed at all.** If a Hermes Python file
+   must change to consume an accelerator, the change is a **single
+   `invoke_hook(...)` call** at the slot point, with the existing
+   in-file implementation as the default. No reformatting, no
    refactoring, no behavioural drift bundled in.
-3. **Compat wrapper owns the fallback.** Each crate ships a Python module
-   (e.g. `hermes_toolreg_compat`) that tries to import the Rust extension
-   and otherwise re-exports the unchanged upstream implementation. The
-   try / except / fallback logic lives in the wrapper, not in upstream's
-   source.
-4. **Atomic per-crate commits.** One crate's contribution = one
-   cherry-pickable commit (or a small, ordered series). No mixing crates
-   in a single commit.
+4. **Atomic per-package commits.** One package = one cherry-pickable
+   commit (or a small ordered series). No mixing packages.
 5. **Match upstream conventions.** Commit message format, code style,
-   license headers, line endings — follow whatever upstream uses, so
-   their reviewers see no friction.
+   license headers, line endings — follow whatever upstream uses.
 
-The acceptance test for any change on `thoon` is: *could we open a PR to
-NousResearch/hermes-agent with just this one commit, and would it stand
-alone?* If no, the commit is malformed and must be re-shaped.
+The acceptance test for any change on `thoon` is: *could we open a PR
+to NousResearch/hermes-agent with just this one commit, and would it
+stand alone?* If no, the commit is malformed.
 
 ## Branch Model
 
-- **`main`** — pristine mirror of `upstream/main`. Auto-synced daily by
-  `.github/workflows/upstream-sync.yml`. **Never edited directly.**
+- **`main`** — pristine mirror of `upstream/main`. Auto-synced daily
+  by `.github/workflows/upstream-sync.yml`. **Never edited directly.**
 - **`thoon`** — stable mainline of this fork. Periodically merges from
-  `main` (or rebases against it inside short-lived phase branches).
-- **Phase branches** — short-lived (hours to days) feature branches off
-  `thoon` for each crate's implementation work. Rebased onto `thoon`
-  before opening their PR.
+  `main` (or rebases in short-lived phase branches).
+- **Phase branches** — short-lived (hours to days) off `thoon`, one
+  per package's implementation work.
 
-A drift check (`.github/workflows/target-lib-check.yml`) runs after each
-successful `upstream-sync` and opens an issue whenever a target Python
-file has changed in upstream — that's our weekly "look at the target lib"
-signal, triggered by the actual sync event rather than wall-clock cadence.
-
-## Priority Order
-
-1. **`hermes-toolreg`** — tool registry, schema generation, dispatch.
-   Touched on every tool call; the biggest UX win.
-2. **`hermes-fileops`** — file read / write / search / patch.
-   Replaces shell-outs to `rg` / `grep` / `find`.
-3. **`hermes-sessiondb`** — SQLite + FTS5 session store.
-   Write throughput and full-text search.
-4. **`hermes-msgproc`** — message sanitization, repair, budgeting.
-   **Deferred.** Smallest per-call cost; revisit after the first three ship.
-
-## Crate Layout
-
-```
-hermes-rust/
-├── Cargo.toml                  # Workspace root
-├── hermes-core/                # Shared error mapping + types
-├── hermes-toolreg/             # Phase 1 — registry & dispatch
-├── hermes-fileops/             # Phase 2 — file operations
-├── hermes-sessiondb/           # Phase 3 — session DB
-└── hermes-msgproc/             # Phase 4 — deferred
-```
-
-Each crate compiles to its own Python extension module via PyO3, and ships
-its own `pyproject.toml` so it can be built and released independently
-with `maturin`.
-
-## Python Hot Paths Targeted
-
-| File                       | Lines | Phase | Notes                                       |
-| -------------------------- | ----- | ----- | ------------------------------------------- |
-| `tools/registry.py`        |   589 | 1     | Tool registry, schema validation            |
-| `model_tools.py`           |   923 | 1     | Tool discovery, dispatch, schema generation |
-| `tools/file_operations.py` |  1825 | 2     | File read/write/search/patch                |
-| `hermes_state.py`          |  3238 | 3     | SQLite session storage with FTS5            |
-| `run_agent.py`             |  4123 | 4     | Message processing hot path                 |
-
-Line counts are from `main` at branch time.
-
-## Build & Compatibility Strategy
-
-- **Maturin + PyO3.** PEP 517/518 compliant; standard in the PyO3 ecosystem.
-- **MSRV: Rust 1.75+.** Aligned with current PyO3 stable.
-- **Feature flags.** `rust-toolreg`, `rust-fileops`, `rust-sessiondb`,
-  `rust-msgproc` — enabled incrementally.
-- **Python fallback.** `HERMES_RUST=0` env var forces the pure-Python
-  implementations; this is the CI matrix for confirming behavioural parity.
-- **GIL.** Release in long-running Rust ops (search, DB writes), acquire
-  for Python callbacks.
-- **Errors.** PyO3 `PyErr` maps to Python exceptions; `hermes-core`
-  defines a shared `HermesError` enum that lowers to the relevant Python
-  exception subclass.
+A drift check (`.github/workflows/target-lib-check.yml`) runs after
+each successful `upstream-sync` and opens an issue when any target
+Python file in upstream has changed.
 
 ## Phases
 
-### Phase 1 — `hermes-toolreg` (target: weeks 1–2)
+### Phase 0 — Upstream Plugin Contract for Accelerators (prerequisite)
 
-- `ToolRegistry` — concurrent hash map via `dashmap`.
-- `ToolSchema` — JSON Schema generation via `schemars`.
-- `ToolDispatcher` — direct function-pointer call, no Python reflection
-  in the steady-state path.
-- `ArgumentValidator` — JSON Schema validation via `jsonschema`.
-- Replace: `tools/registry.py::ToolRegistry`,
-  `model_tools.py::get_tool_definitions`, `model_tools.py::handle_function_call`.
-- Benchmark targets: 10× faster tool discovery, 2× faster dispatch.
+Before any Rust ships, we propose a small upstream PR that establishes
+the plugin contract for accelerator-style plugins:
 
-### Phase 2 — `hermes-fileops` (target: weeks 3–4)
+- Add `"accelerator"` plugin kind to `_VALID_PLUGIN_KINDS` in
+  `hermes_cli/plugins.py` (or extend `backend` semantics).
+- Add slot hooks at three call sites:
+  - `tools/registry.py` — slot for `tool_registry`
+  - `tools/file_operations.py` — slot for `file_operations`
+  - `hermes_state.py` — slot for `session_db`
+- Each slot uses `plugins.invoke_hook("provide_<slot>")` and takes the
+  first non-`None` result; defaults to the existing in-file
+  implementation when no plugin claims the slot.
 
-- `search_content` — regex search via `grep-regex` + `ignore` crates
-  (replaces `rg` shell-out).
-- `search_files` — glob search via `globset` (replaces `find` shell-out).
+This is itself useful to upstream even without our Rust — it opens
+Hermes to alternative backends generically (Cython, Go via cgo,
+alternate SQLite wrappers, anyone). Total surface: ~50 lines of
+indirection across three Python files.
+
+If upstream declines the slot hooks, we maintain the same indirection
+on `thoon` and the cherry-pick discipline still applies, just to fewer
+files.
+
+### Phase 1 — `thoon-toolreg` + `hermes-thoon-toolreg`
+
+`thoon-toolreg` (Rust):
+- `ToolRegistry` primitive — concurrent hash map via `dashmap`.
+- JSON Schema generation via `schemars`.
+- Direct function-pointer dispatch.
+- Argument validation via `jsonschema`.
+- Framework-neutral API; no Hermes types.
+
+`hermes-thoon-toolreg` (Python):
+- Imports `thoon_toolreg`.
+- `register(ctx)` adapts thoon's primitive to Hermes' ToolRegistry
+  contract (`tools/registry.py::ToolRegistry`).
+- Provides the `provide_tool_registry` hook.
+
+Targets: 10× faster tool discovery, 2× faster dispatch.
+
+### Phase 2 — `thoon-fileops` + `hermes-thoon-fileops`
+
+`thoon-fileops` (Rust):
+- `search_content` — regex search via `grep-regex` + `ignore`.
+- `search_files` — glob search via `globset`.
 - `read_file` — mmap-backed reading with offset / limit.
 - `write_file` — atomic write with optional backup.
-- `patch_file` — unified diff application via `diffy`.
-- Benchmark targets: 5× faster search, 3× faster I/O.
+- `patch_file` — unified-diff application via `diffy`.
 
-### Phase 3 — `hermes-sessiondb` (target: weeks 5–6)
+`hermes-thoon-fileops` (Python):
+- Adapts thoon's primitives to `tools/file_operations.py`'s API.
 
-- Connection pool via `sqlx` (async) and `rusqlite` (sync).
-- FTS5 virtual-table tuning and prepared-statement caching.
+Targets: 5× faster search, 3× faster I/O.
+
+### Phase 3 — `thoon-sqlite` + `hermes-thoon-sessiondb`
+
+`thoon-sqlite` (Rust):
+- Connection pool (sync + async).
+- Prepared-statement cache.
+- FTS5 conveniences.
 - WAL mode with safe fallback.
-- Batch inserts for message history.
-- Benchmark targets: 3× faster writes, 5× faster FTS5 search.
+- Framework-neutral; no Hermes schema.
 
-### Phase 4 — `hermes-msgproc` (deferred)
+`hermes-thoon-sessiondb` (Python):
+- Adapts thoon-sqlite to Hermes' `SessionDB` contract in
+  `hermes_state.py`. Owns the Hermes-specific schema and FTS5 layout.
+
+Targets: 3× faster writes, 5× faster FTS5 search.
+
+### Phase 4 — `hermes-thoon-msgproc` (deferred, glue-only)
 
 - `sanitize_surrogates` — SIMD UTF-8 validation.
 - `repair_message_sequence` — state machine for role alternation.
 - `sanitize_tool_call_arguments` — JSON repair via `serde_json`.
 - `IterationBudget` — lock-free atomic counters.
-- Benchmark target: 2× faster per-iteration overhead.
-- Status: **deferred** — revisited only after Phases 1–3 ship and we have
-  real benchmark data confirming msgproc is the next bottleneck.
 
-## Build Commands
+No generic `thoon-*` primitive — the Hermes message shape is specific
+enough that a generic layer adds no value. Revisit only after Phases
+1–3 ship and benchmarks confirm message-loop overhead is the next
+real bottleneck.
 
-```bash
-# Phase 1 — just toolreg
-cd hermes-rust/hermes-toolreg && maturin develop
+## Build & Compatibility Strategy
 
-# All available crates once they exist
-cd hermes-rust && maturin develop --features all
-
-# Release wheels
-cd hermes-rust/hermes-toolreg && maturin build --release
-```
+- **Maturin + PyO3** for `thoon-*` Rust crates.
+- **Setuptools** for `hermes-thoon-*` Python packages.
+- **MSRV: Rust 1.75+.**
+- **Plugin enablement** through Hermes' existing `plugins.enabled` /
+  `plugins.disabled` config knobs. No new env var system.
+- **Fallback** is the existing pure-Python implementation when no
+  `hermes-thoon-*` plugin claims a slot.
 
 ## CI Strategy
 
-- `HERMES_RUST=1` — runs the test suite against the Rust modules.
-- `HERMES_RUST=0` — runs the same suite against pure Python.
-- Both must pass on every PR. Behavioural parity is gating.
+- **Behavioural parity** — same test suite must pass with and without
+  each `hermes-thoon-*` plugin installed. Add per-plugin matrix entries
+  as plugins ship.
+- **Cherry-pick smoke test** — verify each `hermes-thoon-*` package
+  can be `pip install`ed against an unmodified upstream checkout.
 
 ### Automation
 
-- **`upstream-sync.yml`** (daily, 06:00 UTC) — fast-forwards `origin/main`
-  to `upstream/main`. Fails loudly if `main` has diverged (it shouldn't,
-  since `main` is never edited directly).
+- **`upstream-sync.yml`** (daily 06:00 UTC) — fast-forwards
+  `origin/main` to `upstream/main`. Fails loudly if `main` has
+  diverged.
 - **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
-  diffs the upstream Python files we plan to accelerate against `thoon`.
-  Opens or updates an issue listing what changed and links the diff, so
-  drift is visible before the next phase PR.
+  diffs target Python files and opens/updates a drift issue.
+
+## Workspace Layout
+
+```
+thoon/
+├── Cargo.toml                       # Rust workspace (thoon-* members only)
+├── README.md                        # layer overview + quickstart
+├── .gitignore
+│
+├── thoon-core/                      # Rust: shared types + errors
+├── thoon-toolreg/                   # Rust: tool registry primitive  (Phase 1, hello-world)
+├── thoon-fileops/                   # Rust: file ops primitives      (Phase 2 placeholder)
+├── thoon-sqlite/                    # Rust: sqlite + FTS5 helpers    (Phase 3 placeholder)
+│
+├── hermes-thoon-toolreg/            # Python plugin                  (Phase 1 stub)
+├── hermes-thoon-fileops/            # Python plugin                  (Phase 2 placeholder)
+├── hermes-thoon-sessiondb/          # Python plugin                  (Phase 3 placeholder)
+└── hermes-thoon-msgproc/            # Python plugin (deferred)
+```
+
+## Phase 1 Quickstart
+
+```bash
+cd thoon/thoon-toolreg
+maturin develop
+python -c "import thoon_toolreg; print(thoon_toolreg.version())"
+```
 
 ## Risk & Mitigation
 
-| Risk                               | Mitigation                                                  |
-| ---------------------------------- | ----------------------------------------------------------- |
-| Rust toolchain unavailable on host | Pure Python fallback via `HERMES_RUST=0`                    |
-| PyO3 version drift                 | Pin `pyo3` in `Cargo.toml`; test matrix across Python 3.10–3.12 |
-| Memory safety bugs                 | `#![forbid(unsafe_code)]` except at the explicit FFI boundary |
-| Wheel size growth                  | Each crate is independently buildable / releasable          |
-| Behavioural divergence             | CI runs the same suite with `HERMES_RUST=0` and `HERMES_RUST=1` |
-
-## What's in this Initial Commit
-
-- This document.
-- The `hermes-rust/` workspace skeleton.
-- A buildable `hermes-toolreg` PyO3 stub exposing `version()` so that
-  `maturin develop` from `hermes-rust/hermes-toolreg/` produces a working
-  extension. This proves the toolchain end-to-end before real work lands.
-- Empty `hermes-core`, `hermes-fileops`, `hermes-sessiondb`,
-  `hermes-msgproc` crates that compile but expose nothing yet.
-
-Real implementations land in follow-up PRs against `thoon`.
+| Risk                                | Mitigation                                                |
+| ----------------------------------- | --------------------------------------------------------- |
+| Upstream rejects Phase 0 hooks      | Maintain the indirection on `thoon` only; cherry-picks of `hermes-thoon-*` plugins still apply (with a small wire-in patch) |
+| PyO3 version drift                  | Pin `pyo3` in workspace `Cargo.toml`; CI matrix Python 3.10–3.12 |
+| Memory safety bugs                  | `#![forbid(unsafe_code)]` except at the explicit FFI boundary |
+| `thoon-*` API churn breaks plugins  | Each `thoon-*` crate has its own `0.x` semver track; `hermes-thoon-*` pins to compatible versions |
+| Behavioural divergence              | Per-plugin parity test in CI                              |

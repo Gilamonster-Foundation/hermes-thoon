@@ -1,16 +1,16 @@
 [package]
-name = "hermes-toolreg"
+name = "thoon-toolreg"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Phase 1: tool registry, schema, and dispatch for the Hermes Agent."
+description = "Generic concurrent tool registry primitive for Python LLM-agent frameworks."
 
 [lib]
-name = "hermes_toolreg"
+name = "thoon_toolreg"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3.workspace = true
-hermes-core = { path = "../hermes-core" }
+thoon-core = { path = "../thoon-core" }
