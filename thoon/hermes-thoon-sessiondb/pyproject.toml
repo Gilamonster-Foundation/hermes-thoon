@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-thoon-sessiondb"
-version = "0.1.0"
+version = "0.5.20260520"
 description = "Hermes plugin: faster session storage backed by thoon-sqlite."
+readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    # "thoon-sqlite>=0.1.0",  # uncomment when thoon-sqlite ships
+    # "thoon-sqlite>=0.5.20260520",  # uncomment when thoon-sqlite ships
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

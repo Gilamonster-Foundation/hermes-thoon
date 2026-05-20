@@ -186,6 +186,23 @@ real bottleneck.
 - **Cherry-pick smoke test** — verify each `hermes-thoon-*` package
   can be `pip install`ed against an unmodified upstream checkout.
 
+### Push hook governance
+
+Per the workspace rule "hooks must mirror pipelines":
+
+- `.githooks/pre-push` runs `cargo fmt --check`, `cargo clippy -- -D warnings`,
+  and `cargo check --all` from `thoon/`.
+- `.github/workflows/thoon-ci.yml` runs the same checks on push to
+  `thoon` and on PR.
+- Both files carry cross-reference comments so any edit to one signals
+  the need to update the other.
+
+Install the hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ### Automation
 
 - **`upstream-sync.yml`** (daily 06:00 UTC) — fast-forwards
@@ -193,6 +210,8 @@ real bottleneck.
   diverged.
 - **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
   diffs target Python files and opens/updates a drift issue.
+- **`thoon-ci.yml`** (push to `thoon` or PR touching `thoon/**`) —
+  validates the `thoon/` Rust workspace and Python plugins.
 
 ## Workspace Layout
 

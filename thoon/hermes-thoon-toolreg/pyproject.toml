@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-thoon-toolreg"
-version = "0.1.0"
+version = "0.5.20260520"
 description = "Hermes plugin: faster ToolRegistry backed by thoon-toolreg (Rust)."
+readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "thoon-toolreg>=0.1.0",
+    "thoon-toolreg>=0.5.20260520",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

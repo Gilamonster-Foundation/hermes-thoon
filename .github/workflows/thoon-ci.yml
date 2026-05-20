@@ -1,0 +1,45 @@
+name: thoon CI
+
+# HOOK PARITY: This pipeline is mirrored by .githooks/pre-push.
+# When editing this file, update the push hook to match.
+#
+# Scope: validates the thoon/ Rust workspace and the Python plugins.
+# Does not retread upstream Hermes' own test suite (gated by
+# upstream-owned workflows that ship in this fork unmodified).
+
+on:
+  pull_request:
+    paths:
+      - 'thoon/**'
+      - '.github/workflows/thoon-ci.yml'
+      - '.githooks/pre-push'
+  push:
+    branches: [thoon]
+    paths:
+      - 'thoon/**'
+      - '.github/workflows/thoon-ci.yml'
+      - '.githooks/pre-push'
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: thoon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust + fmt + clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo check --all
+        run: cargo check --all

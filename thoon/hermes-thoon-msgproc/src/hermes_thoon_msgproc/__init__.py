@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """hermes-thoon-msgproc — Phase 4 placeholder (deferred).
 
 Hermes plugin glue for message-processing acceleration. Status: deferred
@@ -11,7 +12,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
+__version__ = "0.5.20260520"
 
 
 def register(ctx) -> None:

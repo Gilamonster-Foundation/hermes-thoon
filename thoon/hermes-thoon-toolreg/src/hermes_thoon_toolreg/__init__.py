@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """hermes-thoon-toolreg — Hermes plugin: Rust-accelerated ToolRegistry.
 
 Adapter glue between Hermes' ToolRegistry contract (`tools/registry.py`)
@@ -18,7 +19,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
+__version__ = "0.5.20260520"
 
 
 def _thoon_version() -> str | None:

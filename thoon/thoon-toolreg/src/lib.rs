@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #![forbid(unsafe_code)]
 
 //! `thoon-toolreg` — generic concurrent tool registry primitive.

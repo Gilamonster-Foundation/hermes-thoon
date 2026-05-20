@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-thoon-fileops"
-version = "0.1.0"
+version = "0.5.20260520"
 description = "Hermes plugin: faster file operations backed by thoon-fileops."
+readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    # "thoon-fileops>=0.1.0",  # uncomment when thoon-fileops ships
+    # "thoon-fileops>=0.5.20260520",  # uncomment when thoon-fileops ships
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
