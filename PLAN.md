@@ -74,29 +74,33 @@ stand alone?* If no, the commit is malformed.
 ## Branch Model
 
 - **`main`** — curated mirror of `NousResearch/hermes-agent`. Tracks
-  the **most recent upstream SHA whose `tests.yml` run was green**,
-  not upstream's `main` head. Auto-synced daily by
+  the **most recent upstream release tag** matching `v2026.*`, not
+  upstream's `main` head. Auto-synced daily by
   `.github/workflows/upstream-sync.yml`. **Never edited directly.**
 - **`thoon`** — stable mainline of this fork. Periodically merges from
   `main` (or rebases in short-lived phase branches).
 - **Phase branches** — short-lived (hours to days) off `thoon`, one
   per package's implementation work.
 
-### Why "latest green" instead of "upstream head"
+### Why "latest release tag" instead of "upstream head" or "latest green CI"
 
 Upstream's `main` is frequently in a transiently broken state — for
-example, `tests.yml` failed on 99 of the last 100 runs against
+example, `tests.yml` succeeded on only 1 of the last 50 runs on
 `NousResearch/hermes-agent:main` at the time we set this up
 (stale `test_all_seven_plugins_present_in_registry`, an
 `_UpdateOutputStream` isinstance flake, and others). Tracking head
-would inherit that breakage and pollute the signal on our own PRs —
-every thoon push would show red CI for reasons unrelated to our
-work, training us to ignore failures.
+would inherit that breakage. But tracking "latest green CI" also
+proved unreliable: upstream's tests.yml is too noisy to be a clean
+gate, and even tagged releases sometimes have failing CI runs.
 
-Tracking the latest known-green upstream SHA gives us a stable
-baseline at the cost of a small (hours-to-days) lag. The lag is
-fine: we're not chasing bleeding-edge fixes, we're building
-acceleration plugins on top of a known-good Hermes.
+So the rule we settled on: **track upstream release tags**. Tags are
+the only commits NousResearch explicitly declares stable — that's a
+better signal than CI churn. The cost is a slightly larger lag
+(0–7 days, since they cut releases roughly weekly).
+
+Our origin/main may sit ahead of the latest tag for short periods —
+the workflow simply waits for a newer tag and stays put until then.
+We never auto-rewind.
 
 A drift check (`.github/workflows/target-lib-check.yml`) runs after
 each successful `upstream-sync` and opens an issue when any target
@@ -223,12 +227,11 @@ git config core.hooksPath .githooks
 
 ### Automation
 
-- **`upstream-sync.yml`** (daily 06:00 UTC) — queries upstream's
-  `tests.yml` run history, finds the most recent green SHA on
-  `NousResearch/hermes-agent:main`, verifies it is an ancestor of
-  `upstream/main` and a descendant of our `main`, then fast-forwards
-  `origin/main` to it. Fails loudly if no green run is found in the
-  last 200 entries, or if lineage checks fail.
+- **`upstream-sync.yml`** (daily 06:00 UTC) — fetches upstream tags,
+  picks the highest-versioned tag matching `v2026.*` reachable from
+  `upstream/main`, verifies it is a descendant of our current
+  `origin/main`, then fast-forwards. Quiet no-op when no newer tag
+  exists. Aborts loudly if lineage checks fail.
 - **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
   diffs target Python files and opens/updates a drift issue.
 - **`thoon-ci.yml`** (push to `thoon` or PR touching `thoon/**`) —
