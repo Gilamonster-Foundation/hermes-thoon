@@ -1,0 +1,51 @@
+name: Upstream Sync
+
+# Fast-forwards origin/main to NousResearch/hermes-agent:main.
+#
+# Discipline: origin/main is a pristine mirror of upstream. Nothing else
+# in this repo is ever supposed to push to main. If the fast-forward
+# fails because main has diverged, that is a bug to investigate, not
+# something to force-resolve.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily, 06:00 UTC
+  workflow_dispatch:       # manual run
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure committer
+        run: |
+          git config user.name  "hermes-thoon-bot"
+          git config user.email "actions@github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch upstream main
+
+      - name: Fast-forward main
+        run: |
+          # --ff-only fails loudly if main has diverged from upstream.
+          # That is the correct failure mode — we never want to silently
+          # merge or rewrite history on the mirror branch.
+          git merge --ff-only upstream/main
+
+      - name: Push
+        run: git push origin main

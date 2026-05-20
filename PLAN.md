@@ -14,6 +14,53 @@ when Rust is unavailable.
 3–10× throughput on the agent's hot paths while preserving 100% API
 compatibility with the upstream Python interfaces.
 
+## Contribution Posture
+
+`hermes-thoon` is **not a long-term divergent fork.** Every crate in
+`hermes-rust/` is an *optional* Rust variation of an existing Hermes
+package, designed so that upstream NousResearch/hermes-agent can cherry-pick
+the work on their own schedule, with no obligation to take it.
+
+That posture imposes hard discipline on how commits are shaped:
+
+1. **Pure additions when possible.** New work goes under `hermes-rust/`
+   and ships with its own Python compat wrapper. The upstream Python tree
+   stays untouched.
+2. **One-line wire-ins.** When a Python file in the upstream tree must
+   change to consume the Rust accelerator, the change is a **single
+   import-line swap** to the compat wrapper. No reformatting, no
+   refactoring, no behavioural drift bundled in.
+3. **Compat wrapper owns the fallback.** Each crate ships a Python module
+   (e.g. `hermes_toolreg_compat`) that tries to import the Rust extension
+   and otherwise re-exports the unchanged upstream implementation. The
+   try / except / fallback logic lives in the wrapper, not in upstream's
+   source.
+4. **Atomic per-crate commits.** One crate's contribution = one
+   cherry-pickable commit (or a small, ordered series). No mixing crates
+   in a single commit.
+5. **Match upstream conventions.** Commit message format, code style,
+   license headers, line endings — follow whatever upstream uses, so
+   their reviewers see no friction.
+
+The acceptance test for any change on `thoon` is: *could we open a PR to
+NousResearch/hermes-agent with just this one commit, and would it stand
+alone?* If no, the commit is malformed and must be re-shaped.
+
+## Branch Model
+
+- **`main`** — pristine mirror of `upstream/main`. Auto-synced daily by
+  `.github/workflows/upstream-sync.yml`. **Never edited directly.**
+- **`thoon`** — stable mainline of this fork. Periodically merges from
+  `main` (or rebases against it inside short-lived phase branches).
+- **Phase branches** — short-lived (hours to days) feature branches off
+  `thoon` for each crate's implementation work. Rebased onto `thoon`
+  before opening their PR.
+
+A drift check (`.github/workflows/target-lib-check.yml`) runs after each
+successful `upstream-sync` and opens an issue whenever a target Python
+file has changed in upstream — that's our weekly "look at the target lib"
+signal, triggered by the actual sync event rather than wall-clock cadence.
+
 ## Priority Order
 
 1. **`hermes-toolreg`** — tool registry, schema generation, dispatch.
@@ -126,6 +173,16 @@ cd hermes-rust/hermes-toolreg && maturin build --release
 - `HERMES_RUST=1` — runs the test suite against the Rust modules.
 - `HERMES_RUST=0` — runs the same suite against pure Python.
 - Both must pass on every PR. Behavioural parity is gating.
+
+### Automation
+
+- **`upstream-sync.yml`** (daily, 06:00 UTC) — fast-forwards `origin/main`
+  to `upstream/main`. Fails loudly if `main` has diverged (it shouldn't,
+  since `main` is never edited directly).
+- **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
+  diffs the upstream Python files we plan to accelerate against `thoon`.
+  Opens or updates an issue listing what changed and links the diff, so
+  drift is visible before the next phase PR.
 
 ## Risk & Mitigation
 
