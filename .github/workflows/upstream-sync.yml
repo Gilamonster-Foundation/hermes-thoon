@@ -1,11 +1,20 @@
 name: Upstream Sync
 
-# Fast-forwards origin/main to NousResearch/hermes-agent:main.
+# Fast-forwards origin/main to the most recent commit on
+# NousResearch/hermes-agent:main whose `tests.yml` run finished green.
 #
-# Discipline: origin/main is a pristine mirror of upstream. Nothing else
-# in this repo is ever supposed to push to main. If the fast-forward
-# fails because main has diverged, that is a bug to investigate, not
-# something to force-resolve.
+# Why "latest green" instead of "upstream head":
+#   Upstream's main branch frequently sits in a transiently-broken state
+#   (test_all_seven_plugins_present_in_registry, _UpdateOutputStream
+#    isinstance failures, etc. — failing across many recent main runs).
+#   Tracking head would inherit that breakage and pollute the signal on
+#   our own PRs. Tracking the latest GREEN upstream SHA gives us a
+#   stable baseline at the cost of a small (hours to days) lag.
+#
+# Discipline: origin/main is a curated mirror of upstream — nothing else
+# in this repo pushes to main. If the fast-forward fails because main
+# has diverged, that is a bug to investigate, not something to
+# force-resolve.
 
 on:
   schedule:
@@ -14,10 +23,19 @@ on:
 
 permissions:
   contents: write
+  actions: read            # to query upstream's workflow runs
 
 concurrency:
   group: upstream-sync
   cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: NousResearch/hermes-agent
+  UPSTREAM_WORKFLOW: tests.yml
+  # How far back to search in upstream's run history when looking for a
+  # green commit. 200 covers ~a week of upstream activity at current
+  # commit cadence.
+  SEARCH_LIMIT: '200'
 
 jobs:
   sync:
@@ -37,15 +55,58 @@ jobs:
 
       - name: Fetch upstream
         run: |
-          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream main
+
+      - name: Find latest green upstream SHA
+        id: green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA=$(gh run list \
+            --repo "$UPSTREAM_REPO" \
+            --branch main \
+            --workflow "$UPSTREAM_WORKFLOW" \
+            --limit "$SEARCH_LIMIT" \
+            --json conclusion,headSha \
+            --jq '[.[] | select(.conclusion=="success")][0].headSha')
+          if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
+            echo "No green $UPSTREAM_WORKFLOW run found in last $SEARCH_LIMIT entries on $UPSTREAM_REPO:main."
+            echo "Aborting sync — investigate upstream CI before forcing."
+            exit 1
+          fi
+          echo "Latest green upstream SHA: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Verify SHA lineage
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.green.outputs.sha }}"
+          # The green SHA must be reachable from upstream/main (it is by
+          # construction — gh run list filters on branch main — but
+          # double-check to catch history rewrites.)
+          if ! git merge-base --is-ancestor "$SHA" upstream/main; then
+            echo "Green SHA $SHA is not an ancestor of upstream/main."
+            echo "Upstream may have rewritten history. Aborting."
+            exit 1
+          fi
+          # And must be a descendant of (or equal to) our current main.
+          if ! git merge-base --is-ancestor HEAD "$SHA"; then
+            echo "Our origin/main is not an ancestor of $SHA."
+            echo "main has diverged from the upstream lineage. Aborting."
+            exit 1
+          fi
 
       - name: Fast-forward main
         run: |
-          # --ff-only fails loudly if main has diverged from upstream.
-          # That is the correct failure mode — we never want to silently
-          # merge or rewrite history on the mirror branch.
-          git merge --ff-only upstream/main
+          set -euo pipefail
+          SHA="${{ steps.green.outputs.sha }}"
+          if [ "$(git rev-parse HEAD)" = "$SHA" ]; then
+            echo "Already at $SHA — nothing to do."
+            exit 0
+          fi
+          git merge --ff-only "$SHA"
 
       - name: Push
         run: git push origin main

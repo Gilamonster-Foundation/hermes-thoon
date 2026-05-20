@@ -73,12 +73,30 @@ stand alone?* If no, the commit is malformed.
 
 ## Branch Model
 
-- **`main`** — pristine mirror of `upstream/main`. Auto-synced daily
-  by `.github/workflows/upstream-sync.yml`. **Never edited directly.**
+- **`main`** — curated mirror of `NousResearch/hermes-agent`. Tracks
+  the **most recent upstream SHA whose `tests.yml` run was green**,
+  not upstream's `main` head. Auto-synced daily by
+  `.github/workflows/upstream-sync.yml`. **Never edited directly.**
 - **`thoon`** — stable mainline of this fork. Periodically merges from
   `main` (or rebases in short-lived phase branches).
 - **Phase branches** — short-lived (hours to days) off `thoon`, one
   per package's implementation work.
+
+### Why "latest green" instead of "upstream head"
+
+Upstream's `main` is frequently in a transiently broken state — for
+example, `tests.yml` failed on 99 of the last 100 runs against
+`NousResearch/hermes-agent:main` at the time we set this up
+(stale `test_all_seven_plugins_present_in_registry`, an
+`_UpdateOutputStream` isinstance flake, and others). Tracking head
+would inherit that breakage and pollute the signal on our own PRs —
+every thoon push would show red CI for reasons unrelated to our
+work, training us to ignore failures.
+
+Tracking the latest known-green upstream SHA gives us a stable
+baseline at the cost of a small (hours-to-days) lag. The lag is
+fine: we're not chasing bleeding-edge fixes, we're building
+acceleration plugins on top of a known-good Hermes.
 
 A drift check (`.github/workflows/target-lib-check.yml`) runs after
 each successful `upstream-sync` and opens an issue when any target
@@ -205,9 +223,12 @@ git config core.hooksPath .githooks
 
 ### Automation
 
-- **`upstream-sync.yml`** (daily 06:00 UTC) — fast-forwards
-  `origin/main` to `upstream/main`. Fails loudly if `main` has
-  diverged.
+- **`upstream-sync.yml`** (daily 06:00 UTC) — queries upstream's
+  `tests.yml` run history, finds the most recent green SHA on
+  `NousResearch/hermes-agent:main`, verifies it is an ancestor of
+  `upstream/main` and a descendant of our `main`, then fast-forwards
+  `origin/main` to it. Fails loudly if no green run is found in the
+  last 200 entries, or if lineage checks fail.
 - **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
   diffs target Python files and opens/updates a drift issue.
 - **`thoon-ci.yml`** (push to `thoon` or PR touching `thoon/**`) —
