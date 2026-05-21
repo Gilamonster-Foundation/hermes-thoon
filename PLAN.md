@@ -74,32 +74,37 @@ stand alone?* If no, the commit is malformed.
 ## Branch Model
 
 - **`main`** — curated mirror of `NousResearch/hermes-agent`. Tracks
-  the **most recent upstream release tag** matching `v2026.*`, not
-  upstream's `main` head. Auto-synced daily by
-  `.github/workflows/upstream-sync.yml`. **Never edited directly.**
-- **`thoon`** — stable mainline of this fork. Periodically merges from
-  `main` (or rebases in short-lived phase branches).
+  the **newest upstream commit on `main` whose entire CI is green**
+  (every check run on the SHA finished `success`, `skipped`, or
+  `neutral`; any `failure`/`cancelled`/`action_required`/`timed_out`/
+  `stale`/`startup_failure` disqualifies the commit). Auto-synced
+  daily by `.github/workflows/upstream-sync.yml`. **Never edited
+  directly.**
+- **`thoon`** — stable mainline of this fork. Default branch.
+  Periodically merges from `main` (or rebases in short-lived phase
+  branches).
 - **Phase branches** — short-lived (hours to days) off `thoon`, one
   per package's implementation work.
 
-### Why "latest release tag" instead of "upstream head" or "latest green CI"
+### Why "newest all-green commit" instead of "upstream head" or "latest release tag"
 
-Upstream's `main` is frequently in a transiently broken state — for
-example, `tests.yml` succeeded on only 1 of the last 50 runs on
-`NousResearch/hermes-agent:main` at the time we set this up
-(stale `test_all_seven_plugins_present_in_registry`, an
-`_UpdateOutputStream` isinstance flake, and others). Tracking head
-would inherit that breakage. But tracking "latest green CI" also
-proved unreliable: upstream's tests.yml is too noisy to be a clean
-gate, and even tagged releases sometimes have failing CI runs.
+Upstream's `main` head is frequently in a transiently broken state.
+Tagging-only filtering proved too lossy in the other direction —
+when upstream's release cadence slows down we'd lag arbitrarily,
+and even tagged releases sometimes carry red CI.
 
-So the rule we settled on: **track upstream release tags**. Tags are
-the only commits NousResearch explicitly declares stable — that's a
-better signal than CI churn. The cost is a slightly larger lag
-(0–7 days, since they cut releases roughly weekly).
+"All checks green on this SHA" is the closest available signal to
+"this commit is healthy" without us having to judge individual
+workflows. It catches commits where every CI gate upstream has set
+up (tests, lint, security, supply-chain, docs) cleared without
+failure. It includes legitimate skips (path-filtered workflows) as
+green.
 
-Our origin/main may sit ahead of the latest tag for short periods —
-the workflow simply waits for a newer tag and stays put until then.
+The lag is typically hours-to-days — upstream commits land in
+bursts of partial CI completion, and we just pick up the most
+recent clean one each day. If upstream's CI is unhealthy long
+enough that no green commit exists in our 300-commit search window,
+the workflow fails loudly rather than silently advancing.
 We never auto-rewind.
 
 A drift check (`.github/workflows/target-lib-check.yml`) runs after
@@ -227,11 +232,13 @@ git config core.hooksPath .githooks
 
 ### Automation
 
-- **`upstream-sync.yml`** (daily 06:00 UTC) — fetches upstream tags,
-  picks the highest-versioned tag matching `v2026.*` reachable from
-  `upstream/main`, verifies it is a descendant of our current
-  `origin/main`, then fast-forwards. Quiet no-op when no newer tag
-  exists. Aborts loudly if lineage checks fail.
+- **`upstream-sync.yml`** (daily 06:00 UTC) — walks
+  `NousResearch/hermes-agent:main` newest-first (up to 300 commits)
+  and picks the first SHA whose check runs all completed without
+  failures. Verifies the SHA is reachable from `upstream/main` and
+  a descendant of our `origin/main`, then fast-forwards. Quiet
+  no-op when no newer green SHA exists; aborts loudly if no green
+  SHA is found in the search window.
 - **`target-lib-check.yml`** (triggered by completed `upstream-sync`) —
   diffs target Python files and opens/updates a drift issue.
 - **`thoon-ci.yml`** (push to `thoon` or PR touching `thoon/**`) —
