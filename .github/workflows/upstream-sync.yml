@@ -1,0 +1,121 @@
+name: Upstream Sync
+
+# Fast-forwards origin/main to the most recent release TAG on
+# NousResearch/hermes-agent. Tags are the only commits NousResearch
+# explicitly declares stable; arbitrary upstream main commits churn
+# too fast and fail too often to be a safe baseline.
+#
+# Filter discipline (decided 2026-05-20):
+#   - We sync only to tags matching `v2026.*` (the upstream
+#     date-based release pattern).
+#   - The tag must be reachable from upstream/main.
+#   - The tag commit must be a descendant of (or equal to) our
+#     current origin/main — we never rewind automatically.
+#   - We do NOT additionally require the tag's CI to be green;
+#     NousResearch's own CI is too noisy to be a reliable gate,
+#     and the tag itself is the signal of intent.
+#
+# Note: this repo's origin/main may currently sit ahead of the
+# latest tag (e.g., pinned to a verified-green non-tag SHA from
+# the previous policy). That is intentional and benign — this
+# workflow simply waits for a newer tag and stays put until then.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily, 06:00 UTC
+  workflow_dispatch:       # manual run
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: NousResearch/hermes-agent
+  TAG_GLOB: 'v2026.*'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure committer
+        run: |
+          git config user.name  "hermes-thoon-bot"
+          git config user.email "actions@github.com"
+
+      - name: Fetch upstream + tags
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main --tags
+
+      - name: Find latest upstream release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          # Pick the highest-versioned tag matching the upstream
+          # date-based pattern, restricted to tags reachable from
+          # upstream/main.
+          LATEST_TAG=$(git tag -l "$TAG_GLOB" --sort=-version:refname --merged upstream/main | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No upstream release tag matching $TAG_GLOB found on upstream/main."
+            exit 1
+          fi
+          SHA=$(git rev-parse "${LATEST_TAG}^{commit}")
+          echo "Latest upstream release tag: $LATEST_TAG ($SHA)"
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"       >> "$GITHUB_OUTPUT"
+
+      - name: Verify SHA lineage
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.tag.outputs.sha }}"
+
+          # The tag must be reachable from upstream/main (it is by
+          # construction with --merged, but double-check to catch
+          # any history rewrites between fetch and now).
+          if ! git merge-base --is-ancestor "$SHA" upstream/main; then
+            echo "Tag SHA $SHA is not an ancestor of upstream/main."
+            echo "Upstream may have rewritten history. Aborting."
+            exit 1
+          fi
+
+          # If the tag is older than (an ancestor of) our current
+          # main, do nothing — we never auto-rewind. This is the
+          # expected steady state when our main was pinned ahead of
+          # the latest tag under a previous policy.
+          if git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "Latest tag $SHA is already an ancestor of our main; nothing to do."
+            echo "skip=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # Otherwise the tag must be a descendant of our current main
+          # so we can fast-forward.
+          if ! git merge-base --is-ancestor HEAD "$SHA"; then
+            echo "Tag SHA $SHA is not a descendant of our main, and our main"
+            echo "is not an ancestor of it. main has diverged from the"
+            echo "upstream lineage. Aborting."
+            exit 1
+          fi
+
+      - name: Fast-forward main
+        if: env.skip != 'true'
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.tag.outputs.sha }}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "Fast-forwarding main to $TAG ($SHA)."
+          git merge --ff-only "$SHA"
+
+      - name: Push
+        if: env.skip != 'true'
+        run: git push origin main

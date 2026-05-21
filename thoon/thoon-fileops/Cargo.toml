@@ -1,0 +1,11 @@
+[package]
+name = "thoon-fileops"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fast regex search, mmap reads, atomic writes, and unified-diff patching."
+
+[dependencies]
+thoon-core = { path = "../thoon-core" }

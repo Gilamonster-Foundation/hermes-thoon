@@ -1,0 +1,11 @@
+[package]
+name = "thoon-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared error type and protocol primitives for thoon crates."
+
+[dependencies]
+thiserror.workspace = true

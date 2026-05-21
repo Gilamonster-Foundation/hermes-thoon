@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-thoon-toolreg"
+version = "0.5.20260520"
+description = "Hermes plugin: faster ToolRegistry backed by thoon-toolreg (Rust)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "thoon-toolreg>=0.5.20260520",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Framework :: Hermes Agent",
+]
+
+[project.urls]
+Repository = "https://github.com/Gilamonster-Foundation/hermes-thoon"
+
+# Discovered by hermes_cli/plugins.py via importlib.metadata.
+[project.entry-points."hermes_agent.plugins"]
+hermes_thoon_toolreg = "hermes_thoon_toolreg:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]

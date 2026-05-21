@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-thoon-sessiondb"
+version = "0.5.20260520"
+description = "Hermes plugin: faster session storage backed by thoon-sqlite."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    # "thoon-sqlite>=0.5.20260520",  # uncomment when thoon-sqlite ships
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Framework :: Hermes Agent",
+]
+
+[project.urls]
+Repository = "https://github.com/Gilamonster-Foundation/hermes-thoon"
+
+[project.entry-points."hermes_agent.plugins"]
+hermes_thoon_sessiondb = "hermes_thoon_sessiondb:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]

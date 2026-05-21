@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "thoon-core",
+    "thoon-toolreg",
+    "thoon-fileops",
+    "thoon-sqlite",
+]
+
+[workspace.package]
+# Kyln versioning: 0.{month}.{YYYYMMDD} — see knowledge memory.
+version = "0.5.20260520"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+repository = "https://github.com/Gilamonster-Foundation/hermes-thoon"
+
+[workspace.dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+thiserror = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

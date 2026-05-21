@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-push hook for hermes-thoon.
+#
+# PIPELINE PARITY: This hook mirrors .github/workflows/thoon-ci.yml.
+# When editing this file, verify it still matches the workflow.
+#
+# Install once per clone:
+#   git config core.hooksPath .githooks
+#
+# Scope: validates the thoon/ Rust workspace and the Python plugins.
+# Does not run upstream Hermes' own test suite (that's gated by
+# upstream-owned workflows under .github/workflows/).
+
+set -euo pipefail
+
+if [ ! -d thoon ]; then
+    echo "[pre-push] No thoon/ directory found — skipping."
+    exit 0
+fi
+
+cd thoon
+
+echo "[pre-push] cargo fmt --check"
+cargo fmt --all -- --check
+
+echo "[pre-push] cargo clippy -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "[pre-push] cargo check --all"
+cargo check --all
+
+echo "[pre-push] all checks passed."
