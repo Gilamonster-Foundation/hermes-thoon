@@ -1,24 +1,27 @@
 name: Upstream Sync
 
-# Fast-forwards origin/main to the most recent release TAG on
-# NousResearch/hermes-agent. Tags are the only commits NousResearch
-# explicitly declares stable; arbitrary upstream main commits churn
-# too fast and fail too often to be a safe baseline.
+# Fast-forwards origin/main to the newest commit on
+# NousResearch/hermes-agent:main whose entire CI is green.
 #
-# Filter discipline (decided 2026-05-20):
-#   - We sync only to tags matching `v2026.*` (the upstream
-#     date-based release pattern).
-#   - The tag must be reachable from upstream/main.
-#   - The tag commit must be a descendant of (or equal to) our
-#     current origin/main — we never rewind automatically.
-#   - We do NOT additionally require the tag's CI to be green;
-#     NousResearch's own CI is too noisy to be a reliable gate,
-#     and the tag itself is the signal of intent.
+# "All green" means: every check run on the SHA has finished
+# (`status == "completed"`) and concluded `success`, `skipped`,
+# or `neutral`. Any `failure`, `cancelled`, `action_required`,
+# `timed_out`, `stale`, or `startup_failure` disqualifies the SHA.
 #
-# Note: this repo's origin/main may currently sit ahead of the
-# latest tag (e.g., pinned to a verified-green non-tag SHA from
-# the previous policy). That is intentional and benign — this
-# workflow simply waits for a newer tag and stays put until then.
+# Why this rule:
+#   - Following upstream HEAD blindly inherits transient breakage
+#     (many recent main commits have failing tests.yml).
+#   - Filtering on a single workflow (tests.yml) misses other
+#     real signal (lint, security scans).
+#   - Tag-only filtering lags too far when upstream releases
+#     slow down.
+#   - "All checks green on the SHA" is the closest available signal
+#     to "this commit is healthy" without judging individual
+#     workflows.
+#
+# Discipline: origin/main is a curated mirror of upstream — nothing
+# else in this repo pushes to main. The workflow never rewinds; if
+# we're already ahead of the newest green, it's a no-op.
 
 on:
   schedule:
@@ -34,7 +37,10 @@ concurrency:
 
 env:
   UPSTREAM_REPO: NousResearch/hermes-agent
-  TAG_GLOB: 'v2026.*'
+  # How far back to search in upstream's main history when scanning
+  # for a green commit. 300 covers ~2-5 days at upstream's commit
+  # cadence — enough headroom for a daily sync to find something.
+  SEARCH_LIMIT: '300'
 
 jobs:
   sync:
@@ -52,58 +58,84 @@ jobs:
           git config user.name  "hermes-thoon-bot"
           git config user.email "actions@github.com"
 
-      - name: Fetch upstream + tags
+      - name: Fetch upstream
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
-          git fetch upstream main --tags
+          git fetch upstream main
 
-      - name: Find latest upstream release tag
-        id: tag
+      - name: Find newest all-green upstream commit
+        id: green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Pick the highest-versioned tag matching the upstream
-          # date-based pattern, restricted to tags reachable from
-          # upstream/main.
-          LATEST_TAG=$(git tag -l "$TAG_GLOB" --sort=-version:refname --merged upstream/main | head -1)
-          if [ -z "$LATEST_TAG" ]; then
-            echo "No upstream release tag matching $TAG_GLOB found on upstream/main."
+          OUR_MAIN=$(git rev-parse HEAD)
+          SHA=""
+          # Walk upstream/main newest-first.
+          for candidate in $(git log upstream/main --format='%H' -n "$SEARCH_LIMIT"); do
+            # If we've walked back to our current main, we're already
+            # at (or ahead of) the newest green — quiet no-op.
+            if [ "$candidate" = "$OUR_MAIN" ]; then
+              echo "Reached our current main ($OUR_MAIN) without finding a newer all-green commit."
+              echo "Nothing to do."
+              echo "skip=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+
+            RUNS=$(gh api "/repos/$UPSTREAM_REPO/commits/$candidate/check-runs?per_page=100" \
+              --jq '.check_runs')
+            TOTAL=$(echo "$RUNS" | jq 'length')
+
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "  $candidate: no check runs — skipping"
+              continue
+            fi
+
+            INCOMPLETE=$(echo "$RUNS" | jq '[.[] | select(.status != "completed")] | length')
+            if [ "$INCOMPLETE" -gt 0 ]; then
+              echo "  $candidate: $INCOMPLETE/$TOTAL checks still pending — skipping"
+              continue
+            fi
+
+            BAD=$(echo "$RUNS" | jq '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+            if [ "$BAD" -gt 0 ]; then
+              BAD_DETAIL=$(echo "$RUNS" | jq -r '[.[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | "\(.name)=\(.conclusion)"] | join(", ")')
+              echo "  $candidate: $BAD non-green ($BAD_DETAIL) — skipping"
+              continue
+            fi
+
+            SHA="$candidate"
+            echo "Selected: $candidate ($TOTAL checks, all completed without failures)"
+            break
+          done
+
+          if [ -z "$SHA" ]; then
+            echo "No all-green upstream commit found in last $SEARCH_LIMIT entries."
+            echo "Investigate upstream CI or extend SEARCH_LIMIT."
             exit 1
           fi
-          SHA=$(git rev-parse "${LATEST_TAG}^{commit}")
-          echo "Latest upstream release tag: $LATEST_TAG ($SHA)"
-          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-          echo "sha=$SHA"       >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Verify SHA lineage
+        if: env.skip != 'true'
         run: |
           set -euo pipefail
-          SHA="${{ steps.tag.outputs.sha }}"
+          SHA="${{ steps.green.outputs.sha }}"
 
-          # The tag must be reachable from upstream/main (it is by
-          # construction with --merged, but double-check to catch
-          # any history rewrites between fetch and now).
+          # Must be reachable from upstream/main (it is by construction,
+          # but double-check to catch history rewrites between fetch
+          # and now).
           if ! git merge-base --is-ancestor "$SHA" upstream/main; then
-            echo "Tag SHA $SHA is not an ancestor of upstream/main."
+            echo "Green SHA $SHA is not an ancestor of upstream/main."
             echo "Upstream may have rewritten history. Aborting."
             exit 1
           fi
 
-          # If the tag is older than (an ancestor of) our current
-          # main, do nothing — we never auto-rewind. This is the
-          # expected steady state when our main was pinned ahead of
-          # the latest tag under a previous policy.
-          if git merge-base --is-ancestor "$SHA" HEAD; then
-            echo "Latest tag $SHA is already an ancestor of our main; nothing to do."
-            echo "skip=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          # Otherwise the tag must be a descendant of our current main
-          # so we can fast-forward.
+          # Must be a descendant of (or equal to) our current main —
+          # we never auto-rewind.
           if ! git merge-base --is-ancestor HEAD "$SHA"; then
-            echo "Tag SHA $SHA is not a descendant of our main, and our main"
-            echo "is not an ancestor of it. main has diverged from the"
-            echo "upstream lineage. Aborting."
+            echo "Green SHA $SHA is not a descendant of our main."
+            echo "main has diverged from the upstream lineage. Aborting."
             exit 1
           fi
 
@@ -111,9 +143,12 @@ jobs:
         if: env.skip != 'true'
         run: |
           set -euo pipefail
-          SHA="${{ steps.tag.outputs.sha }}"
-          TAG="${{ steps.tag.outputs.tag }}"
-          echo "Fast-forwarding main to $TAG ($SHA)."
+          SHA="${{ steps.green.outputs.sha }}"
+          if [ "$(git rev-parse HEAD)" = "$SHA" ]; then
+            echo "Already at $SHA — nothing to do."
+            exit 0
+          fi
+          echo "Fast-forwarding main to $SHA."
           git merge --ff-only "$SHA"
 
       - name: Push
